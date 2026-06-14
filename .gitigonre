@@ -1,0 +1,12 @@
+<< 'EOF'
+.venv/
+__pycache__/
+*.pyc
+*.engine
+*.onnx
+data/
+logs/
+*.mp4
+*.h264
+*.avi
+EOF[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
