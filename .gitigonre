@@ -1,4 +1,3 @@
-<< 'EOF'
 .venv/
 __pycache__/
 *.pyc
@@ -9,4 +8,3 @@ logs/
 *.mp4
 *.h264
 *.avi
-EOF[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[B[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A[A
