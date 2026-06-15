@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+
+data/
+logs/
+
+# Model weights / TensorRT artifacts are pulled or built on-device, not committed
+models/*.pt
+models/*.onnx
+models/*.engine
