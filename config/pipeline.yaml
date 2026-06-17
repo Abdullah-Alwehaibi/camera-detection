@@ -1,0 +1,91 @@
+# Camera-detection AI pipeline — runtime configuration
+# Contract version: 1.0  (integration/contract.py)
+#
+# All socket paths and scale factors must stay in sync with
+# jetson-gstreamer-testing/stream.conf and ai-interface/protocol.h.
+
+# ── Frame input (grabber → AI, §3.1) ─────────────────────────────────────────
+frame_socket: /tmp/ai_frames.sock
+
+# Caps expected from the grabber. The frame reader validates these on connect
+# and aborts loudly if the grabber drifts (e.g. resolution change).
+expected_caps:
+  format: NV12
+  width: 1920
+  height: 1080
+  fps: 15         # frames/sec; grabber default is 5, target is 12–15
+
+# ── Boolean event output (AI → ONVIF/NVR, §3.2) ──────────────────────────────
+# events_adapter.py consumes this socket; it handles cooldown/expiry.
+# Do NOT route rich metadata here — boolean-only, lossy path.
+events_socket: /tmp/ai_events.sock
+
+# ── Rich sidecar output (§4.3) ────────────────────────────────────────────────
+sidecar:
+  backend: unix          # unix | mqtt | websocket
+  path: /tmp/ai_sidecar.sock
+
+  # MQTT settings (uncomment when backend: mqtt)
+  # mqtt_broker: localhost
+  # mqtt_port: 1883
+  # mqtt_topic: camera/ai/sidecar
+  # mqtt_qos: 1
+
+  # WebSocket settings (uncomment when backend: websocket)
+  # ws_host: "0.0.0.0"
+  # ws_port: 8765
+
+# ── 4K bbox scale factors (§3.3) ──────────────────────────────────────────────
+# The AI 1080p frame is an anamorphic downscale of the 4K source.
+# Per-axis factors are REQUIRED — a single scalar misplaces crops.
+# Update both values if the grabber resolution changes.
+scale_4k:
+  x: 2.13333   # 4096 / 1920
+  y: 2.0       # 2160 / 1080
+
+# ── Snapshot / ANPR dispatch (§5.5) ──────────────────────────────────────────
+# backend_pull:      embed bbox_4k + ts_realtime_ns in sidecar; backend
+#                    retrieves the 4K frame from the recording. No grabber
+#                    change required.
+# roadside_snapshot: request a JPEG crop from the snapshot service at
+#                    snapshot_socket. Auto-falls-back to backend_pull if
+#                    the service is absent (see docs/recommendation_snapshot_service.md
+#                    for what the aaeon team must implement to enable this).
+snapshot:
+  mode: backend_pull
+  snapshot_socket: /tmp/ai_snapshot.sock   # used only for roadside_snapshot mode
+
+# ── Detector (§5.2) ───────────────────────────────────────────────────────────
+detector:
+  backend: yolo11          # yolo11 | trafficcamnet
+  engine_path: models/yolo11n.engine
+  input_size: 1280         # network input; do NOT raise to compensate for fps
+  precision: fp16          # fp16 only — INT8 hurts night/rain accuracy
+  vehicle_classes: [2, 3, 5, 7]   # COCO ids: car, motorcycle, bus, truck
+  confidence: 0.4
+
+# ── Tracker (§5.3) ────────────────────────────────────────────────────────────
+tracker:
+  backend: bytetracker     # bytetracker | botsort
+  fps: 15                  # must match expected_caps.fps (Kalman velocity prior)
+  # botsort adds appearance ReID for high-occlusion scenes; slower startup
+  # (downloads ReID weights on first run). Use when ID-switch rate is high.
+
+# ── Rule engine (§5.4) ────────────────────────────────────────────────────────
+# Rules are loaded from rules_file and hot-reloaded on file change.
+# Bad edits are rejected; the last-good config is kept (never crashes on edit).
+rules_file: config/rules.json
+
+# ── Evidence / output ─────────────────────────────────────────────────────────
+evidence_dir: data/snapshots
+location: "Riyadh, Saudi Arabia"   # embedded in evidence databar
+
+# ── Observability (§4.4) ──────────────────────────────────────────────────────
+metrics_port: 9108    # Prometheus text format at http://localhost:9108/metrics
+log_level: INFO       # DEBUG | INFO | WARNING | ERROR
+log_dir: logs
+
+# ── Service behaviour ─────────────────────────────────────────────────────────
+# dry_run: true  → rule events are logged but NOT sent to events_socket or sidecar.
+#                  Always set true during preflight and tests (§6, constraint 5).
+dry_run: false

@@ -1,0 +1,45 @@
+[Unit]
+Description=Tahakom Camera Detection AI Pipeline
+Documentation=file:///home/abdullah/tahakom-camera-detection/CLAUDE.md
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=abdullah
+Group=abdullah
+WorkingDirectory=/home/abdullah/tahakom-camera-detection
+
+# CUDA_ROOT is required by pycuda's SourceModule (GPU preprocessor kernel).
+# PATH must include CUDA bin so nvcc is found at compile time.
+Environment=CUDA_ROOT=/usr/local/cuda-11.4
+Environment=PATH=/usr/local/cuda-11.4/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=/home/abdullah/tahakom-camera-detection/.venv/bin/python \
+    service/main.py \
+    --config config/pipeline.yaml
+
+# Restart on any non-zero exit (including OOM, segfault, etc.)
+# Do NOT restart on deliberate SIGTERM (handled in main.py: exits 0).
+Restart=on-failure
+RestartSec=5s
+
+# Allow up to 3 restarts in 60 s before giving up (avoids crash-loop storms).
+StartLimitBurst=3
+StartLimitIntervalSec=60s
+
+# Give the process 10 s to shut down on SIGTERM before SIGKILL.
+TimeoutStopSec=10s
+
+# Journal routing: all stdout/stderr goes to journald.
+# View with: journalctl -u camera-detection -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=camera-detection
+
+# Security: no new privileges, read-only filesystem except working dir.
+# Relaxed for now to allow pycuda kernel compile in /tmp; tighten on v2.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

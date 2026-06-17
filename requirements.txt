@@ -49,3 +49,28 @@ humanfriendly
 # PEP 604 union syntax in a class body, which raises
 # `TypeError: 'ABCMeta' object is not subscriptable` on Python 3.8.
 pycuda==2024.1
+# pycuda.compiler.SourceModule (used by the GPU preprocessor kernel) requires
+# pytools and appdirs at runtime. These are pure-Python; safe on aarch64.
+pytools
+appdirs
+
+# ── New deps for integration layer + AI pipeline expansion ────────────────────
+# All pure-Python; no aarch64 wheel issues.
+
+# Rule engine geometry (normalized coordinate polygons, line intersection)
+shapely>=2.0.0
+
+# Hot-reload of rules.json on file change (ai/rules/loader.py)
+watchdog>=3.0.0
+
+# Rich sidecar MQTT backend (integration/outputs.py)
+paho-mqtt>=1.6.1
+
+# Prometheus metrics endpoint (service/metrics.py)
+prometheus-client>=0.17.0
+
+# WebSocket sidecar backend (integration/outputs.py)
+websockets>=11.0
+
+# Unit / integration test runner
+pytest>=7.0.0

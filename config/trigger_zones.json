@@ -1,9 +1,28 @@
 {
   "zones": [
     {
-      "id": "line_1",
+      "id": "zone_1781628896114",
       "type": "line",
-      "points": [[0, 540], [1920, 540]]
+      "points": [
+        [
+          1248,
+          464
+        ],
+        [
+          1648,
+          519
+        ]
+      ],
+      "name": "",
+      "enabled": true,
+      "direction": "any",
+      "vehicle_classes": [
+        "car",
+        "motorcycle",
+        "bus",
+        "truck"
+      ],
+      "color": "#FF0000"
     }
   ]
 }

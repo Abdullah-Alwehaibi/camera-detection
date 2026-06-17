@@ -4,11 +4,17 @@
     "width": 1920,
     "height": 1080,
     "fps": 5,
-    "socket_path": "/tmp/ai_frames.sock"
+    "socket_path": "/tmp/ai_frames.sock",
+    "loop": false
   },
   "model": {
     "path": "models/yolo11n.engine",
-    "vehicle_classes": [2, 3, 5, 7],
+    "vehicle_classes": [
+      2,
+      3,
+      5,
+      7
+    ],
     "confidence": 0.4
   },
   "trigger_zones_config": "config/trigger_zones.json",
