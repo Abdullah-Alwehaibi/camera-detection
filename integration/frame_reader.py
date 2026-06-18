@@ -343,16 +343,8 @@ class FrameReader:
         sink = "appsink drop=true max-buffers=1 sync=false"
 
         if self._mode == "shmsrc":
-            # videoconvert is required for cv2.VideoCapture to deliver frames
-            # from shmsrc on GStreamer 1.16.x; without it cap.read() blocks
-            # indefinitely even though the shmsink ring buffer is being written.
-            # The BGR output is handled by the nv12_mode=False path in frames().
-            return (
-                f"shmsrc socket-path={self._socket} "
-                f"! {nv12_caps} "
-                f"! videoconvert ! video/x-raw,format=BGR "
-                f"! {sink}"
-            )
+            # PyGObject path (not cv2) — pipeline string kept for logging only.
+            return f"shmsrc socket-path={self._socket} ! {nv12_caps} ! appsink"
         elif self._mode == "videotestsrc":
             # Synthetic test; videoconvert inside GStreamer is acceptable here
             return (
@@ -394,6 +386,86 @@ class FrameReader:
     # ── Background GStreamer thread ──────────────────────────────────────────
 
     def _gst_loop(self) -> None:
+        if self._mode == "shmsrc":
+            self._gst_loop_pygobject()
+        else:
+            self._gst_loop_cv2()
+
+    def _gst_loop_pygobject(self) -> None:
+        """NV12 appsink via PyGObject — no CPU color conversion.
+
+        cv2.VideoCapture with shmsrc on GStreamer 1.16.x requires a videoconvert
+        that burns ~63ms/frame on CPU. PyGObject appsink with emit-signals=true
+        fires new-sample callbacks from GStreamer's own streaming thread, so no
+        GLib.MainLoop is needed — we just keep the pipeline alive.
+        """
+        import gi
+        gi.require_version('Gst', '1.0')
+        from gi.repository import Gst
+        Gst.init(None)
+
+        w   = self._caps["width"]
+        h   = self._caps["height"]
+        fps = self._caps["fps"]
+        fmt = self._caps["format"]
+        backoff_idx = 0
+
+        while not self._stop.is_set():
+            pipe_str = (
+                f"shmsrc socket-path={self._socket} "
+                f"! video/x-raw,format={fmt},width={w},height={h},framerate={fps}/1 "
+                f"! appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false"
+            )
+            log.info("FrameReader: opening pipeline [%s]", pipe_str)
+            gst_pipe = Gst.parse_launch(pipe_str)
+            sink_el  = gst_pipe.get_by_name("sink")
+
+            def _on_sample(s):
+                sample = s.emit("pull-sample")
+                if sample is None:
+                    return Gst.FlowReturn.ERROR
+                buf = sample.get_buffer()
+                ok, info = buf.map(Gst.MapFlags.READ)
+                if ok:
+                    arr = np.frombuffer(info.data, dtype=np.uint8).copy().reshape(h * 3 // 2, w)
+                    buf.unmap(info)
+                    try:
+                        self._q.put_nowait(arr)
+                    except queue.Full:
+                        self.metrics.record_drop()
+                return Gst.FlowReturn.OK
+
+            sink_el.connect("new-sample", _on_sample)
+
+            try:
+                gst_pipe.set_state(Gst.State.PLAYING)
+                self.metrics.record_reconnect()
+                backoff_idx = 0
+                log.info("FrameReader: pipeline open (reconnects=%d)", self.metrics.reconnects)
+                # new-sample fires from GStreamer's streaming thread; poll bus for EOS/error
+                bus = gst_pipe.get_bus()
+                while not self._stop.is_set():
+                    msg = bus.timed_pop_filtered(
+                        100 * Gst.MSECOND,
+                        Gst.MessageType.EOS | Gst.MessageType.ERROR,
+                    )
+                    if msg is not None:
+                        log.warning("FrameReader: pipeline %s — reconnecting", Gst.MessageType.get_name(msg.type))
+                        break
+            except Exception as exc:
+                log.error("FrameReader: %s", exc)
+            finally:
+                gst_pipe.set_state(Gst.State.NULL)
+
+            if self._stop.is_set():
+                break
+
+            delay = self._BACKOFF_SEC[min(backoff_idx, len(self._BACKOFF_SEC) - 1)]
+            backoff_idx += 1
+            log.info("FrameReader: reconnecting in %d s …", delay)
+            self._stop.wait(delay)
+
+    def _gst_loop_cv2(self) -> None:
         backoff_idx = 0
         cap = None
 
