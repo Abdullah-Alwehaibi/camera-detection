@@ -5,7 +5,14 @@
 # jetson-gstreamer-testing/stream.conf and ai-interface/protocol.h.
 
 # ── Frame input (grabber → AI, §3.1) ─────────────────────────────────────────
-frame_socket: /tmp/ai_frames.sock
+frame_socket: /tmp/frames_sub.sock
+
+# source.mode controls where frames come from:
+#   shmsrc        — real camera via GStreamer shmsrc (production)
+#   videotestsrc  — synthetic 1920x1080 NV12 frames (testing, no camera needed)
+#   file          — pre-recorded video from source.path
+source:
+  mode: shmsrc         # camera live on /tmp/frames_sub.sock (NV12 1920x1080 15fps)
 
 # Caps expected from the grabber. The frame reader validates these on connect
 # and aborts loudly if the grabber drifts (e.g. resolution change).

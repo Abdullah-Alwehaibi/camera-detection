@@ -135,6 +135,7 @@ class _GpuConverter:
     _BLOCK = (32, 8, 1)
 
     def __init__(self, width: int, height: int, cuda_ctx) -> None:
+        import os
         import pycuda.driver as cuda
         from pycuda.compiler import SourceModule
 
@@ -147,7 +148,9 @@ class _GpuConverter:
 
         self._ctx.push()
         try:
-            mod = SourceModule(_NV12_BGR_CUDA, no_extern_c=True)
+            cuda_root = os.environ.get("CUDA_ROOT", "/usr/local/cuda-11.4")
+            nvcc_path = os.path.join(cuda_root, "bin", "nvcc")
+            mod = SourceModule(_NV12_BGR_CUDA, nvcc=nvcc_path)
             self._fn = mod.get_function("nv12_to_bgr")
 
             # Pinned input: fast write-combined H2D path
@@ -340,10 +343,15 @@ class FrameReader:
         sink = "appsink drop=true max-buffers=1 sync=false"
 
         if self._mode == "shmsrc":
-            # Production: no CPU conversion element
+            # videoconvert is required for cv2.VideoCapture to deliver frames
+            # from shmsrc on GStreamer 1.16.x; without it cap.read() blocks
+            # indefinitely even though the shmsink ring buffer is being written.
+            # The BGR output is handled by the nv12_mode=False path in frames().
             return (
-                f"shmsrc socket-path={self._socket} is-live=true "
-                f"! {nv12_caps} ! {sink}"
+                f"shmsrc socket-path={self._socket} "
+                f"! {nv12_caps} "
+                f"! videoconvert ! video/x-raw,format=BGR "
+                f"! {sink}"
             )
         elif self._mode == "videotestsrc":
             # Synthetic test; videoconvert inside GStreamer is acceptable here
