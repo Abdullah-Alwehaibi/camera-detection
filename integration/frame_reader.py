@@ -392,12 +392,13 @@ class FrameReader:
             self._gst_loop_cv2()
 
     def _gst_loop_pygobject(self) -> None:
-        """NV12 appsink via PyGObject — no CPU color conversion.
+        """NV12 appsink via PyGObject pull model — no CPU color conversion.
 
         cv2.VideoCapture with shmsrc on GStreamer 1.16.x requires a videoconvert
-        that burns ~63ms/frame on CPU. PyGObject appsink with emit-signals=true
-        fires new-sample callbacks from GStreamer's own streaming thread, so no
-        GLib.MainLoop is needed — we just keep the pipeline alive.
+        that burns ~63ms/frame on CPU. Using appsink's try-pull-sample in the
+        reader thread delivers NV12 directly without a GLib main loop.
+        emit-signals is avoided because PyGObject signal dispatch requires the
+        GLib main loop running in the main thread — not available in a daemon thread.
         """
         import gi
         gi.require_version('Gst', '1.0')
@@ -408,50 +409,46 @@ class FrameReader:
         h   = self._caps["height"]
         fps = self._caps["fps"]
         fmt = self._caps["format"]
-        backoff_idx = 0
+        backoff_idx  = 0
+        PULL_TIMEOUT = 200 * Gst.MSECOND  # 200ms try-pull-sample timeout
 
         while not self._stop.is_set():
             pipe_str = (
                 f"shmsrc socket-path={self._socket} "
                 f"! video/x-raw,format={fmt},width={w},height={h},framerate={fps}/1 "
-                f"! appsink name=sink emit-signals=true drop=true max-buffers=1 sync=false"
+                f"! appsink name=sink drop=true max-buffers=1 sync=false"
             )
             log.info("FrameReader: opening pipeline [%s]", pipe_str)
             gst_pipe = Gst.parse_launch(pipe_str)
             sink_el  = gst_pipe.get_by_name("sink")
-
-            def _on_sample(s):
-                sample = s.emit("pull-sample")
-                if sample is None:
-                    return Gst.FlowReturn.ERROR
-                buf = sample.get_buffer()
-                ok, info = buf.map(Gst.MapFlags.READ)
-                if ok:
-                    arr = np.frombuffer(info.data, dtype=np.uint8).copy().reshape(h * 3 // 2, w)
-                    buf.unmap(info)
-                    try:
-                        self._q.put_nowait(arr)
-                    except queue.Full:
-                        self.metrics.record_drop()
-                return Gst.FlowReturn.OK
-
-            sink_el.connect("new-sample", _on_sample)
 
             try:
                 gst_pipe.set_state(Gst.State.PLAYING)
                 self.metrics.record_reconnect()
                 backoff_idx = 0
                 log.info("FrameReader: pipeline open (reconnects=%d)", self.metrics.reconnects)
-                # new-sample fires from GStreamer's streaming thread; poll bus for EOS/error
-                bus = gst_pipe.get_bus()
+
                 while not self._stop.is_set():
-                    msg = bus.timed_pop_filtered(
-                        100 * Gst.MSECOND,
-                        Gst.MessageType.EOS | Gst.MessageType.ERROR,
-                    )
+                    # try-pull-sample blocks up to PULL_TIMEOUT then returns None
+                    sample = sink_el.emit("try-pull-sample", PULL_TIMEOUT)
+                    if sample is None:
+                        continue  # timeout — re-check stop flag
+                    buf = sample.get_buffer()
+                    ok, info = buf.map(Gst.MapFlags.READ)
+                    if ok:
+                        arr = np.frombuffer(info.data, dtype=np.uint8).copy().reshape(h * 3 // 2, w)
+                        buf.unmap(info)
+                        try:
+                            self._q.put_nowait(arr)
+                        except queue.Full:
+                            self.metrics.record_drop()
+                    # check for EOS / error without blocking
+                    bus = gst_pipe.get_bus()
+                    msg = bus.pop_filtered(Gst.MessageType.EOS | Gst.MessageType.ERROR)
                     if msg is not None:
-                        log.warning("FrameReader: pipeline %s — reconnecting", Gst.MessageType.get_name(msg.type))
+                        log.warning("FrameReader: pipeline %s — reconnecting", str(msg.type))
                         break
+
             except Exception as exc:
                 log.error("FrameReader: %s", exc)
             finally:
